@@ -70,7 +70,7 @@ async function loadServersConfig(): Promise<ServerConfig[]> {
 
 async function discoverModelsFromServer(
   server: ServerConfig
-): Promise<Array<{ id: string; name: string }>> {
+): Promise<any[]> {
   const baseUrl = `http://${server.host}:${server.port}`;
   const modelsUrl = `${baseUrl}/v1/models`;
 
@@ -88,12 +88,7 @@ async function discoverModelsFromServer(
     }
 
     const data = await response.json();
-    const models = data.data || [];
-
-    return models.map((model: any) => ({
-      id: model.id,
-      name: model.name || model.id,
-    }));
+    return data.data || [];
   } catch (error) {
     console.error(`Failed to connect to ${baseUrl}:`, error);
     return [];
@@ -126,9 +121,10 @@ export default function (pi: ExtensionAPI) {
         api: server.api || "openai-completions",
         apiKey: server.apiKey || "ollama",
         compat: server.compat,
-        models: models.map((model) => ({
+        models: models.map((model: any) => ({
           id: model.id,
-          name: model.name,
+          name: model.name || model.id,
+          contextWindow: model.context_window,
         })),
       });
     }
