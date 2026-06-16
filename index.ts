@@ -112,23 +112,23 @@ export default function (pi: ExtensionAPI) {
         continue;
       }
 
-      const providerName = server.name || `${server.host}-${server.port}`;
+      const providerName = server.name || `${server.host}:${server.port}`;
       const baseUrl = `http://${server.host}:${server.port}/v1`;
 
       pi.registerProvider(providerName, {
         name: `Local Server ${providerName}`,
         baseUrl,
-        api: server.api || "openai-completions",
+        api: (server.api as any) || "openai-completions",
         apiKey: server.apiKey || "ollama",
         compat: server.compat,
         models: models.map((model: any) => ({
           id: model.id,
           name: model.name || model.id,
-          reasoning: false,
-          input: ["text", "image"],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          reasoning: !!model.reasoning,
+          input: model.input || ["text"],
+          cost: model.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: model.context_window || 128000,
-          maxTokens: 16384,
+          maxTokens: model.max_tokens || 16384,
         })),
       });
     }
