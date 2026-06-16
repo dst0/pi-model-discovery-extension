@@ -124,7 +124,11 @@ export default function (pi: ExtensionAPI) {
         models: models.map((model: any) => ({
           id: model.id,
           name: model.name || model.id,
-          contextWindow: model.context_window,
+          reasoning: false,
+          input: ["text", "image"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: model.context_window || 128000,
+          maxTokens: 16384,
         })),
       });
     }
