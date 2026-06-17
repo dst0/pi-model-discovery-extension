@@ -1,4 +1,6 @@
-import { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+interface ExtensionAPI {
+  registerProvider(name: string, config: any): void;
+}
 
 /**
  * Auto-discover models from OpenAI-compatible server endpoints (llama-server, vLLM, Ollama, etc.)
