@@ -97,42 +97,40 @@ async function discoverModelsFromServer(
   }
 }
 
-export default function (pi: ExtensionAPI) {
-  (async () => {
-    const servers = await loadServersConfig();
+export default async function (pi: ExtensionAPI) {
+  const servers = await loadServersConfig();
 
-    if (servers.length === 0) {
-      console.log("No servers configured for auto-discovery");
-      return;
+  if (servers.length === 0) {
+    console.log("No servers configured for auto-discovery");
+    return;
+  }
+
+  // Discover models from each server
+  for (const server of servers) {
+    const models = await discoverModelsFromServer(server);
+
+    if (models.length === 0) {
+      continue;
     }
 
-    // Discover models from each server
-    for (const server of servers) {
-      const models = await discoverModelsFromServer(server);
+    const providerName = server.name || `${server.host}:${server.port}`;
+    const baseUrl = `http://${server.host}:${server.port}/v1`;
 
-      if (models.length === 0) {
-        continue;
-      }
-
-      const providerName = server.name || `${server.host}:${server.port}`;
-      const baseUrl = `http://${server.host}:${server.port}/v1`;
-
-      pi.registerProvider(providerName, {
-        name: `Local Server ${providerName}`,
-        baseUrl,
-        api: (server.api as any) || "openai-completions",
-        apiKey: server.apiKey || "ollama",
-        compat: server.compat,
-        models: models.map((model: any) => ({
-          id: model.id,
-          name: model.name || model.id,
-          reasoning: !!model.reasoning,
-          input: model.input || ["text"],
-          cost: model.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: model.context_window || 128000,
-          maxTokens: model.max_tokens || 16384,
-        })),
-      });
-    }
-  })();
+    pi.registerProvider(providerName, {
+      name: `Local Server ${providerName}`,
+      baseUrl,
+      api: (server.api as any) || "openai-completions",
+      apiKey: server.apiKey || "ollama",
+      compat: server.compat,
+      models: models.map((model: any) => ({
+        id: model.id,
+        name: model.name || model.id,
+        reasoning: !!model.reasoning,
+        input: model.input || ["text"],
+        cost: model.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: model.context_window || 128000,
+        maxTokens: model.max_tokens || 16384,
+      })),
+    });
+  }
 }
