@@ -1,5 +1,12 @@
+interface ExtensionContext {
+  ui: {
+    setStatus(key: string, text: string | undefined): void;
+  };
+}
+
 interface ExtensionAPI {
   registerProvider(name: string, config: any): void;
+  on(event: string, handler: (event: any, ctx: ExtensionContext) => void): void;
 }
 
 /**
@@ -97,40 +104,59 @@ async function discoverModelsFromServer(
   }
 }
 
+let discoveryError: string | undefined;
+
 export default async function (pi: ExtensionAPI) {
-  const servers = await loadServersConfig();
+  let providersRegistered = 0;
 
-  if (servers.length === 0) {
-    console.log("No servers configured for auto-discovery");
-    return;
-  }
+  try {
+    const servers = await loadServersConfig();
 
-  // Discover models from each server
-  for (const server of servers) {
-    const models = await discoverModelsFromServer(server);
+    if (servers.length === 0) {
+      console.log("No servers configured for auto-discovery");
+    } else {
+      // Discover models from each server
+      for (const server of servers) {
+        const models = await discoverModelsFromServer(server);
 
-    if (models.length === 0) {
-      continue;
+        if (models.length === 0) {
+          continue;
+        }
+
+        const providerName = server.name || `${server.host}:${server.port}`;
+        const baseUrl = `http://${server.host}:${server.port}/v1`;
+
+        pi.registerProvider(providerName, {
+          name: `Local Server ${providerName}`,
+          baseUrl,
+          api: (server.api as any) || "openai-completions",
+          apiKey: server.apiKey || "ollama",
+          compat: server.compat,
+          models: models.map((model: any) => ({
+            id: model.id,
+            name: model.name || model.id,
+            reasoning: !!model.reasoning,
+            input: model.input || ["text"],
+            cost: model.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: model.context_window || 128000,
+            maxTokens: model.max_tokens || 16384,
+          })),
+        });
+        providersRegistered++;
+      }
     }
-
-    const providerName = server.name || `${server.host}:${server.port}`;
-    const baseUrl = `http://${server.host}:${server.port}/v1`;
-
-    pi.registerProvider(providerName, {
-      name: `Local Server ${providerName}`,
-      baseUrl,
-      api: (server.api as any) || "openai-completions",
-      apiKey: server.apiKey || "ollama",
-      compat: server.compat,
-      models: models.map((model: any) => ({
-        id: model.id,
-        name: model.name || model.id,
-        reasoning: !!model.reasoning,
-        input: model.input || ["text"],
-        cost: model.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: model.context_window || 128000,
-        maxTokens: model.max_tokens || 16384,
-      })),
-    });
+  } catch (error) {
+    discoveryError = error instanceof Error ? error.message : String(error);
+    console.error("llm-orc discovery failed:", discoveryError);
   }
+
+  pi.on("session_start", (_event: any, ctx: ExtensionContext) => {
+    if (discoveryError) {
+      ctx.ui.setStatus("llm-orc", `llm-orc \u274C ${discoveryError}`);
+    } else if (providersRegistered > 0) {
+      ctx.ui.setStatus("llm-orc", `llm-orc \u2705 ${providersRegistered} provider(s)`);
+    } else {
+      ctx.ui.setStatus("llm-orc", undefined);
+    }
+  });
 }
