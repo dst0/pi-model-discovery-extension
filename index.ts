@@ -71,82 +71,122 @@ async function loadServersConfig(): Promise<ServerConfig[]> {
   try {
     const fs = require("node:fs/promises");
     const config = JSON.parse(await fs.readFile(configPath, "utf8"));
-    return config.servers || [];
+    return (config.servers || []).filter((s: ServerConfig) => s.port === 11450);
   } catch {
     return [];
   }
 }
 
 async function discoverModelsFromServer(
-  server: ServerConfig
+  server: ServerConfig,
+  maxRetries = 5,
 ): Promise<any[]> {
   const baseUrl = `http://${server.host}:${server.port}`;
   const modelsUrl = `${baseUrl}/v1/models`;
 
-  try {
-    const response = await fetch(modelsUrl, {
-      signal: AbortSignal.timeout(3000),
-      headers: {
-        Authorization: `Bearer ${server.apiKey || "ollama"}`,
-      },
-    });
+  let lastError: Error | undefined;
 
-    if (!response.ok) {
-      console.error(`Failed to discover models from ${baseUrl}: ${response.status}`);
-      return [];
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(modelsUrl, {
+        signal: AbortSignal.timeout(5000),
+        headers: {
+          Authorization: `Bearer ${server.apiKey || "ollama"}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data.data || [];
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < maxRetries) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.warn(`Attempt ${attempt}/${maxRetries} failed for ${baseUrl}: ${lastError.message} – retrying in ${delay}ms`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
     }
-
-    const data = await response.json();
-    return data.data || [];
-  } catch (error) {
-    console.error(`Failed to connect to ${baseUrl}:`, error);
-    return [];
   }
+
+  console.error(`Failed to connect to ${baseUrl} after ${maxRetries} attempts:`, lastError);
+  return [];
 }
 
 let discoveryError: string | undefined;
 
 export default async function (pi: ExtensionAPI) {
   let providersRegistered = 0;
+  let totalModels = 0;
 
-  try {
-    const servers = await loadServersConfig();
+  const maxRetries = 5;
 
-    if (servers.length === 0) {
-      console.log("No servers configured for auto-discovery");
-    } else {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const servers = await loadServersConfig();
+
+      if (servers.length === 0) {
+        console.log("No servers configured for auto-discovery");
+        return;
+      }
+
+      let anySuccess = false;
+
       // Discover models from each server
       for (const server of servers) {
         const models = await discoverModelsFromServer(server);
 
-        if (models.length === 0) {
-          continue;
+        if (models.length > 0) {
+          anySuccess = true;
+          const providerName = server.name || `${server.host}:${server.port}`;
+          const baseUrl = `http://${server.host}:${server.port}/v1`;
+
+          pi.registerProvider(providerName, {
+            name: `Local Server ${providerName}`,
+            baseUrl,
+            api: (server.api as any) || "openai-completions",
+            apiKey: server.apiKey || "ollama",
+            compat: server.compat,
+            models: models.map((model: any) => ({
+              id: model.id,
+              name: model.name || model.id,
+              reasoning: !!model.reasoning,
+              input: model.input || ["text"],
+              cost: model.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: model.context_window || 128000,
+              maxTokens: model.max_tokens || 16384,
+            })),
+          });
+          providersRegistered++;
+          totalModels += models.length;
         }
+      }
 
-        const providerName = server.name || `${server.host}:${server.port}`;
-        const baseUrl = `http://${server.host}:${server.port}/v1`;
+      // If at least one server responded, we're done
+      if (anySuccess) return;
 
-        pi.registerProvider(providerName, {
-          name: `Local Server ${providerName}`,
-          baseUrl,
-          api: (server.api as any) || "openai-completions",
-          apiKey: server.apiKey || "ollama",
-          compat: server.compat,
-          models: models.map((model: any) => ({
-            id: model.id,
-            name: model.name || model.id,
-            reasoning: !!model.reasoning,
-            input: model.input || ["text"],
-            cost: model.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: model.context_window || 128000,
-            maxTokens: model.max_tokens || 16384,
-          })),
-        });
-        providersRegistered++;
+      // All servers failed — retry the whole batch
+      if (attempt < maxRetries) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.warn(`Discovery attempt ${attempt}/${maxRetries} — all servers offline, retrying in ${delay}ms`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    } catch (error) {
+      discoveryError = error instanceof Error ? error.message : String(error);
+      console.error("llm-orc discovery error:", discoveryError);
+      if (attempt < maxRetries) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.warn(`Discovery attempt ${attempt}/${maxRetries} failed, retrying in ${delay}ms`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
-  } catch (error) {
-    discoveryError = error instanceof Error ? error.message : String(error);
+  }
+
+  // Exhausted all retries
+  if (!discoveryError) {
+    discoveryError = "All servers unreachable after " + maxRetries + " attempts";
     console.error("llm-orc discovery failed:", discoveryError);
   }
 
@@ -154,7 +194,7 @@ export default async function (pi: ExtensionAPI) {
     if (discoveryError) {
       ctx.ui.setStatus("llm-orc", `llm-orc \u274C ${discoveryError}`);
     } else if (providersRegistered > 0) {
-      ctx.ui.setStatus("llm-orc", `llm-orc \u2705 ${providersRegistered} provider(s)`);
+      ctx.ui.setStatus("llm-orc", `llm-orc \u2705 (${providersRegistered}p ${totalModels}m)`);
     } else {
       ctx.ui.setStatus("llm-orc", undefined);
     }
