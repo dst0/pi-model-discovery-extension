@@ -49,6 +49,11 @@ pi -e /path/to/pi-model-discovery-extension
 
 Run `pi -c` to see discovered models, or use `/model` to select a discovered provider.
 
+Discovery runs during startup. Unreachable servers are retried and skipped
+silently so the terminal is not filled with transient network warnings;
+interactive Pi sessions show a compact footer status such as
+`llm-orc: 1/1 providers, 49 models`.
+
 ## Config options
 
 | Field | Description | Default |
