@@ -1,12 +1,12 @@
 # pi-model-discovery
 
-Auto-discovers models from OpenAI-compatible server endpoints (llama-server, vLLM, Ollama, etc.) and registers them as providers in pi.
+Auto-discovers models from OpenAI-compatible server endpoints (llama-server, vLLM, Ollama, etc.) and registers them as providers in P.
 
 ## Setup
 
 ### 1. Configure servers
 
-Create `~/.pi/agent/servers.json`:
+Create `~/.p/agent/server.json`:
 
 ```json
 {
@@ -39,15 +39,15 @@ export SERVERS="localhost:11450,localhost:11451"
 
 ```bash
 # Link to global extensions directory
-ln -s /path/to/pi-model-discovery-extension ~/.pi/agent/extensions/model-discovery
+ln -s /path/to/pi-model-discovery-extension ~/.p/agent/extensions/model-discovery
 
-# Or use pi -e to load directly
-pi -e /path/to/pi-model-discovery-extension
+# Or use p -e to load directly
+p -e /path/to/pi-model-discovery-extension
 ```
 
 ### 3. Use
 
-Run `pi -c` to see discovered models, or use `/model` to select a discovered provider.
+Run `p -c` to see discovered models, or use `/model` to select a discovered provider.
 
 Discovery runs during startup. Unreachable servers are retried and skipped
 silently so the terminal is not filled with transient network warnings;

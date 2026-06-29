@@ -16,7 +16,7 @@ interface ExtensionAPI {
  * - Set SERVERS env var: "localhost:11450,localhost:11451,localhost:11452"
  * - Or set SERVERS_JSON env var for JSON config:
  *   [{"host":"localhost","port":11450,"name":"server-1","api":"openai-completions"}]
- * - Or place config in ~/.pi/agent/servers.json:
+ * - Or place config in ~/.p/agent/server.json:
  *   {"servers":[{"host":"localhost","port":11450,"name":"server-1"}]}
  */
 
@@ -45,12 +45,27 @@ interface DiscoveryStatus {
 
 const STATUS_KEY = "llm-orc";
 
+function normalizeServersConfig(config: ServerConfig[] | ServersConfig): ServerConfig[] {
+  if (Array.isArray(config)) return config;
+  return config.servers || [];
+}
+
+async function readServersConfigFile(configPath: string): Promise<ServerConfig[] | undefined> {
+  try {
+    const fs = require("node:fs/promises");
+    const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+    return normalizeServersConfig(config);
+  } catch {
+    return undefined;
+  }
+}
+
 async function loadServersConfig(): Promise<ServerConfig[]> {
   // Check env var first
   const serversJson = process.env.SERVERS_JSON;
   if (serversJson) {
     try {
-      return JSON.parse(serversJson);
+      return normalizeServersConfig(JSON.parse(serversJson));
     } catch (e) {
       void e;
       return [];
@@ -77,14 +92,20 @@ async function loadServersConfig(): Promise<ServerConfig[]> {
 
   // Load from config file
   const homedir = require("node:os").homedir();
-  const configPath = require("node:path").resolve(homedir, ".pi/agent/servers.json");
-  try {
-    const fs = require("node:fs/promises");
-    const config = JSON.parse(await fs.readFile(configPath, "utf8"));
-    return config.servers || [];
-  } catch {
-    return [];
+  const path = require("node:path");
+  const configPaths = [
+    path.resolve(homedir, ".p/agent/server.json"),
+    path.resolve(homedir, ".p/agent/servers.json"),
+    path.resolve(homedir, ".pi/agent/server.json"),
+    path.resolve(homedir, ".pi/agent/servers.json"),
+  ];
+
+  for (const configPath of configPaths) {
+    const servers = await readServersConfigFile(configPath);
+    if (servers) return servers;
   }
+
+  return [];
 }
 
 function delay(ms: number): Promise<void> {
