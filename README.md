@@ -49,14 +49,18 @@ p -e /path/to/pi-model-discovery-extension
 
 Run `p -c` to see discovered models, or use `/model` to select a discovered provider.
 
-Discovery runs during startup. Unreachable servers are retried and skipped
-silently so the terminal is not filled with transient network warnings;
-interactive Pi sessions show a compact footer status such as
+Configured servers receive one parallel, bounded startup probe so reachable
+providers are available to P's initial model scope. Successful results are cached
+in `~/.p/agent/model-discovery-cache.json`. Unreachable servers retry with
+exponential backoff in the background and never hold the global startup barrier.
+`P_OFFLINE=1` skips all probes and uses only the cached provider list.
+Interactive P sessions show a compact footer status such as
 `llm-orc: 1/1 providers, 49 models`.
 
 ## Config options
 
 | Field | Description | Default |
+| --- | --- | --- |
 |-------|-------------|---------|
 | host | Server hostname or IP | required |
 | port | Server port number | required |
@@ -64,3 +68,12 @@ interactive Pi sessions show a compact footer status such as
 | api | API type | `openai-completions` |
 | apiKey | API key for auth | `ollama` |
 | compat | Compatibility overrides | `{}` |
+
+The startup probe and background retries can be tuned with environment variables:
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `P_MODEL_DISCOVERY_INITIAL_TIMEOUT_MS` | Timeout for the parallel startup probe | `500` |
+| `P_MODEL_DISCOVERY_RETRY_TIMEOUT_MS` | Timeout for each background retry | `5000` |
+| `P_MODEL_DISCOVERY_RETRY_BASE_MS` | Initial exponential-backoff delay | `1000` |
+| `P_MODEL_DISCOVERY_MAX_ATTEMPTS` | Total attempts including the startup probe | `5` |
