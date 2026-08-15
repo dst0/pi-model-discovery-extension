@@ -204,3 +204,29 @@ test("uses cached models without probing the network in offline mode", async () 
   assert.equal(fetchCalled, false);
   api.emit("session_shutdown");
 });
+
+test("supports baseUrl in ServerConfig and probes resolved models URL", async () => {
+  createAgentDir();
+  setServers([
+    {
+      name: "custom-https",
+      baseUrl: "https://192.168.8.167:11450/v1",
+      api: "openai-completions",
+    },
+  ]);
+  let requestedUrl: string | undefined;
+  globalThis.fetch = ((input) => {
+    requestedUrl = String(input);
+    return Promise.resolve(modelsResponse("https-model"));
+  }) as typeof fetch;
+  const api = new FakeExtensionAPI();
+
+  await modelDiscoveryExtension(api.asExtensionAPI());
+
+  assert.equal(requestedUrl, "https://192.168.8.167:11450/v1/models");
+  assert.equal(api.providers.has("custom-https"), true);
+  const provider = api.providers.get("custom-https") as { baseUrl?: string; api?: string };
+  assert.equal(provider?.baseUrl, "https://192.168.8.167:11450/v1");
+  assert.equal(provider?.api, "openai-completions");
+  api.emit("session_shutdown");
+});

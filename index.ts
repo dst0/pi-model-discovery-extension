@@ -52,8 +52,9 @@ interface ExtensionAPI {
  */
 
 interface ServerConfig {
-  host: string;
-  port: number;
+  host?: string;
+  port?: number;
+  baseUrl?: string;
   name?: string;
   api?: string;
   apiKey?: string;
@@ -121,8 +122,34 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function parseServerConfig(value: unknown): ServerConfig | undefined {
-  if (!isRecord(value) || typeof value.host !== "string" || typeof value.port !== "number") return undefined;
-  if (!Number.isSafeInteger(value.port) || value.port <= 0 || value.port > 65_535) return undefined;
+  if (!isRecord(value)) return undefined;
+
+  let baseUrl: string | undefined;
+  if (typeof value.baseUrl === "string" && value.baseUrl.trim().length > 0) {
+    baseUrl = value.baseUrl.trim();
+  }
+
+  let host: string | undefined;
+  let port: number | undefined;
+
+  if (typeof value.host === "string" && typeof value.port === "number") {
+    if (Number.isSafeInteger(value.port) && value.port > 0 && value.port <= 65_535) {
+      host = value.host;
+      port = value.port;
+    }
+  }
+
+  if ((!host || port === undefined) && !baseUrl) return undefined;
+
+  if ((!host || port === undefined) && baseUrl) {
+    try {
+      const parsedUrl = new URL(baseUrl);
+      host = parsedUrl.hostname;
+      port = parsedUrl.port ? Number.parseInt(parsedUrl.port, 10) : parsedUrl.protocol === "https:" ? 443 : 80;
+    } catch {
+      // Keep baseUrl even if URL parse fails for custom endpoints
+    }
+  }
 
   const compat = isRecord(value.compat)
     ? {
@@ -136,8 +163,9 @@ function parseServerConfig(value: unknown): ServerConfig | undefined {
     : undefined;
 
   return {
-    host: value.host,
-    port: value.port,
+    ...(host ? { host } : {}),
+    ...(port !== undefined ? { port } : {}),
+    ...(baseUrl ? { baseUrl } : {}),
     ...(typeof value.name === "string" ? { name: value.name } : {}),
     ...(typeof value.api === "string" ? { api: value.api } : {}),
     ...(typeof value.apiKey === "string" ? { apiKey: value.apiKey } : {}),
@@ -162,6 +190,13 @@ function parseDiscoveredModel(value: unknown): DiscoveredModel | undefined {
       }
     : undefined;
 
+  const contextWindow =
+    typeof value.context_window === "number"
+      ? value.context_window
+      : typeof value.contextWindow === "number"
+      ? value.contextWindow
+      : undefined;
+
   return {
     id: value.id,
     ...(typeof value.name === "string" ? { name: value.name } : {}),
@@ -170,7 +205,7 @@ function parseDiscoveredModel(value: unknown): DiscoveredModel | undefined {
       ? { input: value.input }
       : {}),
     ...(cost ? { cost } : {}),
-    ...(typeof value.context_window === "number" ? { context_window: value.context_window } : {}),
+    ...(typeof contextWindow === "number" ? { context_window: contextWindow } : {}),
     ...(typeof value.max_tokens === "number" ? { max_tokens: value.max_tokens } : {}),
   };
 }
@@ -232,7 +267,22 @@ function getCachePath(): string {
   return resolve(agentDir, CACHE_FILE_NAME);
 }
 
+function resolveBaseUrl(server: ServerConfig): string {
+  if (server.baseUrl && server.baseUrl.trim().length > 0) {
+    return server.baseUrl.trim().replace(/\/+$/, "");
+  }
+  return `http://${server.host}:${server.port}/v1`;
+}
+
+function resolveModelsUrl(server: ServerConfig): string {
+  const base = resolveBaseUrl(server);
+  return base.endsWith("/models") ? base : `${base}/models`;
+}
+
 function getServerCacheKey(server: ServerConfig): string {
+  if (server.baseUrl && server.baseUrl.trim().length > 0) {
+    return server.baseUrl.trim().replace(/\/+$/, "");
+  }
   return `${server.host}:${server.port}`;
 }
 
@@ -276,7 +326,7 @@ function delay(ms: number): Promise<void> {
 }
 
 async function discoverModelsOnce(server: ServerConfig, timeoutMs: number): Promise<DiscoveryResult> {
-  const modelsUrl = `http://${server.host}:${server.port}/v1/models`;
+  const modelsUrl = resolveModelsUrl(server);
   try {
     const response = await fetch(modelsUrl, {
       signal: AbortSignal.timeout(timeoutMs),
@@ -305,20 +355,34 @@ function toProviderModel(model: DiscoveredModel): ProviderModel {
       cacheRead: model.cost?.cacheRead ?? 0,
       cacheWrite: model.cost?.cacheWrite ?? 0,
     },
-    contextWindow: model.context_window ?? 128_000,
+    contextWindow: model.context_window ?? 32_768,
     maxTokens: model.max_tokens ?? 16_384,
   };
 }
 
 function getProviderName(server: ServerConfig): string {
-  return server.name || `${server.host}:${server.port}`;
+  if (server.name && server.name.trim().length > 0) {
+    return server.name.trim();
+  }
+  if (server.host && server.port) {
+    return `${server.host}:${server.port}`;
+  }
+  if (server.baseUrl) {
+    try {
+      const parsed = new URL(server.baseUrl);
+      return parsed.host;
+    } catch {
+      return server.baseUrl;
+    }
+  }
+  return "unknown-provider";
 }
 
 function registerServerModels(pi: ExtensionAPI, server: ServerConfig, models: DiscoveredModel[]): void {
   const providerName = getProviderName(server);
   pi.registerProvider(providerName, {
     name: `Local Server ${providerName}`,
-    baseUrl: `http://${server.host}:${server.port}/v1`,
+    baseUrl: resolveBaseUrl(server),
     api: server.api || "openai-completions",
     apiKey: server.apiKey || "ollama",
     compat: server.compat,
