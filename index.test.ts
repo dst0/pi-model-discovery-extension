@@ -230,3 +230,112 @@ test("supports baseUrl in ServerConfig and probes resolved models URL", async ()
   assert.equal(provider?.api, "openai-completions");
   api.emit("session_shutdown");
 });
+
+test("registers models with reasoning and thinkingLevelMap from /v1/models", async () => {
+  createAgentDir();
+  setServers([
+    {
+      name: "reasoning-server",
+      host: "127.0.0.1",
+      port: 11450,
+    },
+  ]);
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      Response.json({
+        data: [
+          {
+            id: "mini-pc/qwen3.6-27b",
+            context_window: 65536,
+            reasoning: true,
+            thinking_level_map: {
+              off: "none",
+              low: "low",
+              medium: "medium",
+              high: "high",
+            },
+          },
+          {
+            id: "mini-pc/plain-model",
+            context_window: 32768,
+          },
+        ],
+      }),
+    )) as typeof fetch;
+  const api = new FakeExtensionAPI();
+
+  await modelDiscoveryExtension(api.asExtensionAPI());
+
+  assert.equal(api.providers.has("reasoning-server"), true);
+  const provider = api.providers.get("reasoning-server") as {
+    models: Array<{
+      id: string;
+      reasoning: boolean;
+      thinkingLevelMap?: Record<string, string | null>;
+    }>;
+  };
+  assert.equal(provider.models.length, 2);
+
+  const qwen = provider.models.find((m) => m.id === "mini-pc/qwen3.6-27b");
+  assert.ok(qwen);
+  assert.equal(qwen?.reasoning, true);
+  assert.deepEqual(qwen?.thinkingLevelMap, {
+    off: "none",
+    low: "low",
+    medium: "medium",
+    high: "high",
+  });
+
+  const plain = provider.models.find((m) => m.id === "mini-pc/plain-model");
+  assert.ok(plain);
+  assert.equal(plain?.reasoning, true); // defaults to true
+  assert.equal(plain?.thinkingLevelMap, undefined);
+  api.emit("session_shutdown");
+});
+
+test("restores reasoning and thinkingLevelMap from cached discovery entries", async () => {
+  const agentDir = createAgentDir();
+  setServers([{ host: "cached-reasoning.test", port: 11450, name: "cached-reasoning" }]);
+  fs.writeFileSync(
+    path.join(agentDir, "model-discovery-cache.json"),
+    JSON.stringify({
+      version: 1,
+      servers: {
+        "cached-reasoning.test:11450": {
+          models: [
+            {
+              id: "cached-qwen",
+              reasoning: true,
+              thinking_level_map: {
+                off: null,
+                high: "max",
+              },
+            },
+          ],
+          updatedAt: Date.now(),
+        },
+      },
+    }),
+  );
+  process.env.P_OFFLINE = "1";
+  const api = new FakeExtensionAPI();
+
+  await modelDiscoveryExtension(api.asExtensionAPI());
+
+  assert.equal(api.providers.has("cached-reasoning"), true);
+  const provider = api.providers.get("cached-reasoning") as {
+    models: Array<{
+      id: string;
+      reasoning: boolean;
+      thinkingLevelMap?: Record<string, string | null>;
+    }>;
+  };
+  assert.equal(provider.models.length, 1);
+  assert.equal(provider.models[0].id, "cached-qwen");
+  assert.equal(provider.models[0].reasoning, true);
+  assert.deepEqual(provider.models[0].thinkingLevelMap, {
+    off: null,
+    high: "max",
+  });
+  api.emit("session_shutdown");
+});

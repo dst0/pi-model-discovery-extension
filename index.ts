@@ -12,6 +12,7 @@ interface ProviderModel {
   id: string;
   name: string;
   reasoning: boolean;
+  thinkingLevelMap?: Record<string, string | null>;
   input: string[];
   cost: {
     input: number;
@@ -68,6 +69,8 @@ interface DiscoveredModel {
   id: string;
   name?: string;
   reasoning?: boolean;
+  thinking_level_map?: Record<string, string | null>;
+  thinkingLevelMap?: Record<string, string | null>;
   input?: string[];
   cost?: Partial<ProviderModel["cost"]>;
   context_window?: number;
@@ -178,6 +181,17 @@ function normalizeServersConfig(config: unknown): ServerConfig[] {
   return values.map(parseServerConfig).filter((server): server is ServerConfig => server !== undefined);
 }
 
+function parseThinkingLevelMap(value: unknown): Record<string, string | null> | undefined {
+  if (!isRecord(value)) return undefined;
+  const result: Record<string, string | null> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v === "string" || v === null) {
+      result[k] = v;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function parseDiscoveredModel(value: unknown): DiscoveredModel | undefined {
   if (!isRecord(value) || typeof value.id !== "string") return undefined;
 
@@ -197,10 +211,15 @@ function parseDiscoveredModel(value: unknown): DiscoveredModel | undefined {
       ? value.contextWindow
       : undefined;
 
+  const thinkingLevelMap =
+    parseThinkingLevelMap(value.thinking_level_map) ??
+    parseThinkingLevelMap(value.thinkingLevelMap);
+
   return {
     id: value.id,
     ...(typeof value.name === "string" ? { name: value.name } : {}),
     ...(typeof value.reasoning === "boolean" ? { reasoning: value.reasoning } : {}),
+    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
     ...(Array.isArray(value.input) && value.input.every((item) => typeof item === "string")
       ? { input: value.input }
       : {}),
@@ -344,10 +363,12 @@ async function discoverModelsOnce(server: ServerConfig, timeoutMs: number): Prom
 }
 
 function toProviderModel(model: DiscoveredModel): ProviderModel {
+  const thinkingLevelMap = model.thinkingLevelMap ?? model.thinking_level_map;
   return {
     id: model.id,
     name: model.name || model.id,
-    reasoning: model.reasoning ?? false,
+    reasoning: model.reasoning ?? true,
+    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
     input: model.input ?? ["text"],
     cost: {
       input: model.cost?.input ?? 0,
